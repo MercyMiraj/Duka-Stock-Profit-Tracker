@@ -1,6 +1,8 @@
+import csv
 from datetime import datetime
+import io
 import sqlite3
-from flask import Flask, redirect, render_template, request, url_for
+from flask import Flask, Response, redirect, render_template, request, url_for
 
 app = Flask(__name__)
 DB_NAME = "inventory.db"
@@ -59,6 +61,7 @@ def index():
         (f"{today_str}%",),
     ).fetchone()
 
+  categories = sorted({p["category"] for p in products})
   total_cost = sum(p["buying_price"] * p["quantity"] for p in products)
   expected_revenue = sum(p["selling_price"] * p["quantity"] for p in products)
   expected_profit = expected_revenue - total_cost
@@ -67,6 +70,7 @@ def index():
   return render_template(
       "index.html",
       products=products,
+      categories=categories,
       recent_sales=recent_sales,
       total_cost=total_cost,
       expected_profit=expected_profit,
@@ -123,6 +127,48 @@ def update_stock(product_id, action):
     elif action == "delete":
       conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
   return redirect(url_for("index"))
+
+
+@app.route("/export")
+def export_csv():
+  with get_db() as conn:
+    products = conn.execute(
+        "SELECT * FROM products ORDER BY name ASC"
+    ).fetchall()
+
+  output = io.StringIO()
+  writer = csv.writer(output)
+  writer.writerow([
+      "ID",
+      "Item Name",
+      "Category",
+      "Buying Price (KES)",
+      "Selling Price (KES)",
+      "Profit/Unit (KES)",
+      "In Stock",
+      "Total Stock Value (KES)",
+  ])
+
+  for p in products:
+    profit_unit = p["selling_price"] - p["buying_price"]
+    total_val = p["buying_price"] * p["quantity"]
+    writer.writerow([
+        p["id"],
+        p["name"],
+        p["category"],
+        f"{p['buying_price']:.2f}",
+        f"{p['selling_price']:.2f}",
+        f"{profit_unit:.2f}",
+        p["quantity"],
+        f"{total_val:.2f}",
+    ])
+
+  filename = f"duka_stock_report_{datetime.now().strftime('%Y-%m-%d')}.csv"
+  return Response(
+      output.getvalue(),
+      mimetype="text/csv",
+      headers={"Content-Disposition": f"attachment;filename={filename}"},
+  )
 
 
 if __name__ == "__main__":
